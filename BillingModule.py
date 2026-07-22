@@ -1,21 +1,29 @@
 import ValidationModule as valid
+
 from LoggerModule import logger
 
+from PatientModule import find_patient_by_id
 
-def find_patient_by_id(patients, patient_id):
-    """Return the matching patient record if the ID exists."""
-    for patient in patients:
-        if patient["patient_id"].lower() == patient_id.lower():
-            return patient
-    return None
+from database_connection import (
+    get_database_connection,
+    close_database_connection
+)
 
 
-def find_appointment_by_id(appointments, appointment_id):
-    """Return the matching appointment record if the ID exists."""
-    for appointment in appointments:
-        if appointment["appointment_id"].lower() == appointment_id.lower():
-            return appointment
-    return None
+# def find_patient_by_id(patients, patient_id):
+#     """Return the matching patient record if the ID exists."""
+#     for patient in patients:
+#         if patient["patient_id"].lower() == patient_id.lower():
+#             return patient
+#     return None
+
+
+# def find_appointment_by_id(appointments, appointment_id):
+#     """Return the matching appointment record if the ID exists."""
+#     for appointment in appointments:
+#         if appointment["appointment_id"].lower() == appointment_id.lower():
+#             return appointment
+#     return None
 
 
 def show_bill_details(bill, patient_name):
@@ -30,61 +38,85 @@ def show_bill_details(bill, patient_name):
     print(f"Payment       : {bill['payment_status']}")
 
 
-def generate_bill(bills, patients, appointments):
-    """Create a bill for a completed appointment."""
+def generate_bill():
+
     print("\n--- Generate Patient Bill ---")
 
+    connection = None
+    cursor = None
+
     try:
-        bill_id = input("Enter Bill ID: ").strip()
-        if not bill_id:
-            print("Bill ID cannot be empty.")
-            return
-
-        existing_bill = None
-        for bill in bills:
-            if bill["bill_id"].lower() == bill_id.lower():
-                existing_bill = bill
-                break
-
-        if existing_bill is not None:
-            print(f"Bill ID {bill_id} already exists.")
-            return
 
         patient_id = input("Enter Patient ID: ").strip()
-        if find_patient_by_id(patients, patient_id) is None:
-            print("Patient ID does not exist.")
+
+        patient = find_patient_by_id(patient_id)
+
+        if patient is None:
+            print("Patient not found.")
             return
 
         appointment_id = input("Enter Appointment ID: ").strip()
-        appointment = find_appointment_by_id(appointments, appointment_id)
+
+        connection = get_database_connection()
+
+        if connection is None:
+            print("Database connection failed.")
+            return
+
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT *
+            FROM appointments
+            WHERE appointment_id=%s
+            """,
+            (appointment_id,)
+        )
+
+        appointment = cursor.fetchone()
+
         if appointment is None:
-            print("Appointment ID does not exist.")
+            print("Appointment not found.")
+            return
+
+        if str(appointment["patient_id"]) != str(patient_id):
+            print("This appointment does not belong to the entered patient.")
             return
 
         if appointment["status"] != "Completed":
             print("Bill can only be generated for a completed appointment.")
             return
 
-        existing_appointment_bill = None
-        for bill in bills:
-            if bill["appointment_id"].lower() == appointment_id.lower():
-                existing_appointment_bill = bill
-                break
+        cursor.execute(
+            """
+            SELECT *
+            FROM bills
+            WHERE appointment_id=%s
+            """,
+            (appointment_id,)
+        )
 
-        if existing_appointment_bill is not None:
-            print("A bill has already been generated for this appointment.")
+        if cursor.fetchone():
+            print("Bill has already been generated for this appointment.")
             return
 
-        consultation_fee_text = input("Enter consultation fee: ").strip()
-        medicine_charges_text = input("Enter medicine charges: ").strip()
-        laboratory_charges_text = input("Enter laboratory charges: ").strip()
-        room_charges_text = input("Enter room charges: ").strip()
-        discount_text = input("Enter discount: ").strip()
+        consultation_fee_text = input("Enter Consultation Fee: ").strip()
+        medicine_charges_text = input("Enter Medicine Charges: ").strip()
+        laboratory_charges_text = input("Enter Laboratory Charges: ").strip()
+        room_charges_text = input("Enter Room Charges: ").strip()
+        discount_text = input("Enter Discount: ").strip()
 
-        amount_inputs = [consultation_fee_text, medicine_charges_text, laboratory_charges_text, room_charges_text, discount_text]
+        amount_inputs = [
+            consultation_fee_text,
+            medicine_charges_text,
+            laboratory_charges_text,
+            room_charges_text,
+            discount_text
+        ]
+
         if not all(valid.validate_amount(amount) for amount in amount_inputs):
-            print("Charges and discount cannot be negative or non-numeric.")
-            logger.error("Invalid amount entered while generating bill")
+            print("Invalid amount entered.")
             return
 
         consultation_fee = float(consultation_fee_text)
@@ -93,96 +125,282 @@ def generate_bill(bills, patients, appointments):
         room_charges = float(room_charges_text)
         discount = float(discount_text)
 
-        gross_amount = consultation_fee + medicine_charges + laboratory_charges + room_charges
+        gross_amount = (
+            consultation_fee +
+            medicine_charges +
+            laboratory_charges +
+            room_charges
+        )
 
         if discount > gross_amount:
-            print("Discount cannot be greater than the gross amount.")
+            print("Discount cannot be greater than Gross Amount.")
             return
 
         total_amount = gross_amount - discount
 
-        payment_status = input("Payment status (Paid/Pending): ").strip()
-        if not valid.validate_status(payment_status, valid.VALID_PAYMENT_STATUS):
-            print("Invalid payment status. Must be Paid or Pending.")
+        payment_status = input("Payment Status (Paid/Pending): ").strip().title()
+
+        if not valid.validate_status(
+            payment_status,
+            valid.VALID_PAYMENT_STATUS
+        ):
+            print("Invalid payment status.")
             return
 
-        new_bill = {
-            "bill_id": bill_id,
-            "patient_id": patient_id,
-            "appointment_id": appointment_id,
-            "consultation_fee": consultation_fee,
-            "medicine_charges": medicine_charges,
-            "laboratory_charges": laboratory_charges,
-            "room_charges": room_charges,
-            "discount": discount,
-            "gross_amount": gross_amount,
-            "total_amount": total_amount,
-            "payment_status": payment_status.strip().title(),
-        }
+        cursor = connection.cursor()
 
-        bills.append(new_bill)
-        print(f"Bill {bill_id} generated successfully. Total amount: {total_amount}")
-        logger.info(f"Bill {bill_id} generated for patient {patient_id}")
+        cursor.execute(
+            """
+            INSERT INTO bills
+            (
+                patient_id,
+                appointment_id,
+                consultation_fee,
+                medicine_charges,
+                laboratory_charges,
+                room_charges,
+                discount,
+                gross_amount,
+                total_amount,
+                payment_status
+            )
+            VALUES
+            (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                patient_id,
+                appointment_id,
+                consultation_fee,
+                medicine_charges,
+                laboratory_charges,
+                room_charges,
+                discount,
+                gross_amount,
+                total_amount,
+                payment_status
+            )
+        )
 
-    except Exception:
-        print("Something went wrong while generating the bill.")
-        logger.exception("Unexpected error while generating bill")
+        connection.commit()
+
+        print(
+            f"Bill generated successfully. Bill ID : {cursor.lastrowid}"
+        )
+
+        logger.info(
+            f"Bill {cursor.lastrowid} generated successfully."
+        )
+
+    except Exception as error:
+
+        logger.exception(error)
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            close_database_connection(connection)
 
 
-def view_all_bills(bills, patients):
-    """Show all bills, along with the patient's name."""
+def view_all_bills():
+
     print("\n--- All Bills ---")
 
-    if not bills:
-        print("No bills found.")
-        return
+    connection = None
+    cursor = None
 
-    for bill in bills:
-        patient = find_patient_by_id(patients, bill["patient_id"])
-        patient_name = patient["name"] if patient else "Unknown"
-        show_bill_details(bill, patient_name)
+    try:
 
+        connection = get_database_connection()
 
-def search_patient_bills(bills, patients):
-    """Show every bill for one patient plus a quick total summary."""
-    print("\n--- Search Patient Bills ---")
-    patient_id = input("Enter Patient ID: ").strip()
-
-    patient_bills = [bill for bill in bills if bill["patient_id"].lower() == patient_id.lower()]
-
-    if not patient_bills:
-        print("No bills found for this patient.")
-        return
-
-    total_billed = sum(bill["total_amount"] for bill in patient_bills)
-    total_paid = sum(bill["total_amount"] for bill in patient_bills if bill["payment_status"] == "Paid")
-    total_pending = sum(bill["total_amount"] for bill in patient_bills if bill["payment_status"] == "Pending")
-
-    for bill in patient_bills:
-        patient = find_patient_by_id(patients, bill["patient_id"])
-        patient_name = patient["name"] if patient else "Unknown"
-        show_bill_details(bill, patient_name)
-
-    print("-" * 30)
-    print(f"Total Billed  : {total_billed}")
-    print(f"Total Paid    : {total_paid}")
-    print(f"Total Pending : {total_pending}")
-
-
-def update_payment_status(bills):
-    """Move a bill from Pending to Paid."""
-    print("\n--- Update Payment Status ---")
-    bill_id = input("Enter Bill ID: ").strip()
-
-    for bill in bills:
-        if bill["bill_id"].lower() == bill_id.lower():
-            if bill["payment_status"] == "Paid":
-                print("This bill is already marked as Paid.")
-                return
-
-            bill["payment_status"] = "Paid"
-            print(f"Bill {bill_id} marked as Paid.")
-            logger.info(f"Payment status updated for bill {bill_id}")
+        if connection is None:
+            print("Database connection failed.")
             return
 
-    print("Bill ID does not exist.")
+        cursor = connection.cursor(dictionary=True)
+
+        query = """
+        SELECT *
+        FROM bills
+        ORDER BY bill_id
+        """
+
+        cursor.execute(query)
+
+        bills = cursor.fetchall()
+
+        if not bills:
+            print("No bills found.")
+            return
+
+        for bill in bills:
+
+            patient = find_patient_by_id(bill["patient_id"])
+
+            patient_name = patient["name"] if patient else "Unknown"
+
+            show_bill_details(
+                bill,
+                patient_name
+            )
+
+    except Exception as error:
+
+        logger.exception(error)
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            close_database_connection(connection)
+
+
+def search_patient_bills():
+
+    print("\n--- Search Patient Bills ---")
+
+    patient_id = input("Enter Patient ID: ").strip()
+
+    patient = find_patient_by_id(patient_id)
+
+    if patient is None:
+        print("Patient not found.")
+        return
+
+    connection = None
+    cursor = None
+
+    try:
+
+        connection = get_database_connection()
+
+        if connection is None:
+            print("Database connection failed.")
+            return
+
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT *
+            FROM bills
+            WHERE patient_id=%s
+            ORDER BY bill_id
+            """,
+            (patient_id,)
+        )
+
+        bills = cursor.fetchall()
+
+        if not bills:
+            print("No bills found for this patient.")
+            return
+
+        total_billed = 0
+        total_paid = 0
+        total_pending = 0
+
+        for bill in bills:
+
+            show_bill_details(
+                bill,
+                patient["name"]
+            )
+
+            total_billed += bill["total_amount"]
+
+            if bill["payment_status"] == "Paid":
+                total_paid += bill["total_amount"]
+            else:
+                total_pending += bill["total_amount"]
+
+        print("-" * 30)
+        print(f"Total Billed  : {total_billed}")
+        print(f"Total Paid    : {total_paid}")
+        print(f"Total Pending : {total_pending}")
+
+    except Exception as error:
+
+        logger.exception(error)
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            close_database_connection(connection)
+
+
+def update_payment_status():
+
+    print("\n--- Update Payment Status ---")
+
+    bill_id = input("Enter Bill ID: ").strip()
+
+    connection = None
+    cursor = None
+
+    try:
+
+        connection = get_database_connection()
+
+        if connection is None:
+            print("Database connection failed.")
+            return
+
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT *
+            FROM bills
+            WHERE bill_id=%s
+            """,
+            (bill_id,)
+        )
+
+        bill = cursor.fetchone()
+
+        if bill is None:
+            print("Bill not found.")
+            return
+
+        if bill["payment_status"] == "Paid":
+            print("This bill is already marked as Paid.")
+            return
+
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            UPDATE bills
+            SET payment_status='Paid'
+            WHERE bill_id=%s
+            """,
+            (bill_id,)
+        )
+
+        connection.commit()
+
+        print(f"Bill {bill_id} marked as Paid.")
+
+        logger.info(
+            f"Payment status updated for bill {bill_id}"
+        )
+
+    except Exception as error:
+
+        logger.exception(error)
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            close_database_connection(connection)
