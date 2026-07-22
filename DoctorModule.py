@@ -211,6 +211,7 @@ def search_doctor():
     try:
 
         connection = get_database_connection()
+<<<<<<< Updated upstream
 
         if connection is None:
             print("Database connection failed.")
@@ -282,3 +283,77 @@ def search_doctor():
 
         if connection:
             close_database_connection(connection)
+=======
+
+        if connection is None:
+            print("Database connection failed.")
+            return
+
+        cursor = connection.cursor(dictionary=True)
+
+        if choice == "1":
+
+            query = """
+            SELECT *
+            FROM doctors
+            WHERE doctor_id=%s
+            """
+
+            cursor.execute(query, (search_value,))
+
+        elif choice == "2":
+
+            query = """
+            SELECT *
+            FROM doctors
+            WHERE doctor_name LIKE %s
+            """
+
+            cursor.execute(query, ("%" + search_value + "%",))
+
+        elif choice == "3":
+
+            query = """
+            SELECT *
+            FROM doctors
+            WHERE department LIKE %s
+            """
+
+            cursor.execute(query, ("%" + search_value + "%",))
+
+        elif choice == "4":
+
+            query = """
+            SELECT *
+            FROM doctors
+            WHERE availability_status=%s
+            """
+
+            cursor.execute(query, (search_value.title(),))
+
+        else:
+            print("Invalid search option.")
+            return
+
+        doctors = cursor.fetchall()
+
+        if not doctors:
+            print("No matching doctor found.")
+            return
+
+        for doctor in doctors:
+            show_doctor_details(doctor)
+
+    except Exception as error:
+
+        logger.exception(error)
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            close_database_connection(connection)
+
+>>>>>>> Stashed changes
