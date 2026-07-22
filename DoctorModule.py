@@ -1,94 +1,201 @@
 import ValidationModule as valid
+
 from LoggerModule import logger
 
+from database_connection import (
+    get_database_connection,
+    close_database_connection
+)
 
-def find_doctor_by_id(doctors, doctor_id):
-    """Return the matching doctor record if the ID exists."""
-    for doctor in doctors:
-        if doctor["doctor_id"].lower() == doctor_id.lower():
-            return doctor
-    return None
+
+def find_doctor_by_id(doctor_id):
+
+    connection = None
+    cursor = None
+
+    try:
+
+        connection = get_database_connection()
+
+        if connection is None:
+            return None
+
+        cursor = connection.cursor(dictionary=True)
+
+        query = """
+        SELECT *
+        FROM doctors
+        WHERE doctor_id=%s
+        """
+
+        cursor.execute(query, (doctor_id,))
+
+        return cursor.fetchone()
+
+    except Exception as error:
+        logger.exception(error)
+        return None
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            close_database_connection(connection)
 
 
 def show_doctor_details(doctor):
-    """Print the details of one doctor in a clear format."""
-    print("-" * 30)
-    print(f"Doctor ID    : {doctor['doctor_id']}")
-    print(f"Name         : {doctor['doctor_name']}")
-    print(f"Department   : {doctor['department']}")
-    print(f"Fee          : {doctor['consultation_fee']}")
-    print(f"Availability : {doctor['availability_status']}")
+
+    print("-" * 40)
+    print(f"Doctor ID        : {doctor['doctor_id']}")
+    print(f"Doctor Name      : {doctor['doctor_name']}")
+    print(f"Department       : {doctor['department']}")
+    print(f"Consultation Fee : {doctor['consultation_fee']}")
+    print(f"Availability     : {doctor['availability_status']}")
 
 
-def add_doctor(doctors):
-    """Ask for doctor details and add a new doctor record."""
+def add_doctor():
+
     print("\n--- Add New Doctor ---")
 
+    connection = None
+    cursor = None
+
     try:
-        doctor_id = input("Enter Doctor ID: ").strip()
 
-        if not doctor_id:
-            print("Doctor ID cannot be empty.")
-            return
+        doctor_name = input("Enter Doctor Name: ").strip()
 
-        existing_doctor = find_doctor_by_id(doctors, doctor_id)
-        if existing_doctor is not None:
-            print(f"Doctor ID {doctor_id} already exists.")
-            logger.warning(f"Duplicate Doctor ID {doctor_id} entered")
-            return
-
-        doctor_name = input("Enter doctor name: ").strip()
         if not valid.validate_not_empty(doctor_name):
             print("Doctor name cannot be empty.")
             return
 
-        department = input("Enter department: ").strip()
+        department = input("Enter Department: ").strip()
+
         if not valid.validate_not_empty(department):
             print("Department cannot be empty.")
             return
 
-        consultation_fee_text = input("Enter consultation fee: ").strip()
-        if not valid.validate_amount(consultation_fee_text) or float(consultation_fee_text) <= 0:
-            print("Invalid consultation fee. It must be greater than zero.")
-            logger.error("Invalid consultation fee entered")
+        consultation_fee = input("Enter Consultation Fee: ").strip()
+
+        if not valid.validate_amount(consultation_fee):
+            print("Invalid consultation fee.")
             return
 
-        availability_status = input("Availability (Available/Unavailable/On Leave): ").strip()
-        if not valid.validate_status(availability_status, valid.VALID_AVAILABILITY):
-            print("Invalid availability status.")
+        availability = input(
+            "Availability (Available/Unavailable/On Leave): "
+        ).strip()
+
+        if not valid.validate_status(
+            availability,
+            valid.VALID_AVAILABILITY
+        ):
+            print("Invalid availability.")
             return
 
-        new_doctor = {
-            "doctor_id": doctor_id,
-            "doctor_name": doctor_name,
-            "department": department,
-            "consultation_fee": float(consultation_fee_text),
-            "availability_status": availability_status.strip().title(),
-        }
+        connection = get_database_connection()
 
-        doctors.append(new_doctor)
-        print(f"Doctor {doctor_id} added successfully.")
-        logger.info(f"Doctor {doctor_id} registered successfully")
+        if connection is None:
+            print("Database connection failed.")
+            return
 
-    except Exception:
-        print("Something went wrong while adding the doctor.")
-        logger.exception("Unexpected error while adding doctor")
+        cursor = connection.cursor()
+
+        query = """
+        INSERT INTO doctors
+        (
+            doctor_name,
+            department,
+            consultation_fee,
+            availability_status
+        )
+        VALUES
+        (%s,%s,%s,%s)
+        """
+
+        values = (
+            doctor_name,
+            department,
+            float(consultation_fee),
+            availability.title()
+        )
+
+        cursor.execute(query, values)
+
+        connection.commit()
+
+        print(
+            f"Doctor added successfully. Doctor ID : {cursor.lastrowid}"
+        )
+
+        logger.info(
+            f"Doctor {cursor.lastrowid} added successfully."
+        )
+
+    except Exception as error:
+
+        print("Something went wrong.")
+
+        logger.exception(error)
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            close_database_connection(connection)
 
 
-def view_all_doctors(doctors):
-    """Print every doctor currently in the list."""
+def view_all_doctors():
+
     print("\n--- All Doctors ---")
 
-    if not doctors:
-        print("No doctors available.")
-        return
+    connection = None
+    cursor = None
 
-    for doctor in doctors:
-        show_doctor_details(doctor)
+    try:
+
+        connection = get_database_connection()
+
+        if connection is None:
+            print("Database connection failed.")
+            return
+
+        cursor = connection.cursor(dictionary=True)
+
+        query = """
+        SELECT *
+        FROM doctors
+        ORDER BY doctor_id
+        """
+
+        cursor.execute(query)
+
+        doctors = cursor.fetchall()
+
+        if not doctors:
+            print("No doctors available.")
+            return
+
+        for doctor in doctors:
+            show_doctor_details(doctor)
+
+    except Exception as error:
+
+        logger.exception(error)
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            close_database_connection(connection)
 
 
-def search_doctor(doctors):
-    """Search doctors by ID, name, department or availability status."""
+def search_doctor():
+
     print("\n--- Search Doctor ---")
     print("1. Doctor ID")
     print("2. Doctor Name")
@@ -96,25 +203,82 @@ def search_doctor(doctors):
     print("4. Availability Status")
 
     choice = input("Choose a search option: ").strip()
-    search_value = input("Enter search value: ").strip().lower()
+    search_value = input("Enter search value: ").strip()
 
-    matching_doctors = []
+    connection = None
+    cursor = None
 
-    if choice == "1":
-        matching_doctors = [doctor for doctor in doctors if doctor["doctor_id"].lower() == search_value]
-    elif choice == "2":
-        matching_doctors = [doctor for doctor in doctors if search_value in doctor["doctor_name"].lower()]
-    elif choice == "3":
-        matching_doctors = [doctor for doctor in doctors if search_value in doctor["department"].lower()]
-    elif choice == "4":
-        matching_doctors = [doctor for doctor in doctors if doctor["availability_status"].lower() == search_value]
-    else:
-        print("Invalid search option.")
-        return
+    try:
 
-    if not matching_doctors:
-        print("No matching doctor found.")
-        return
+        connection = get_database_connection()
 
-    for doctor in matching_doctors:
-        show_doctor_details(doctor)
+        if connection is None:
+            print("Database connection failed.")
+            return
+
+        cursor = connection.cursor(dictionary=True)
+
+        if choice == "1":
+
+            query = """
+            SELECT *
+            FROM doctors
+            WHERE doctor_id=%s
+            """
+
+            cursor.execute(query, (search_value,))
+
+        elif choice == "2":
+
+            query = """
+            SELECT *
+            FROM doctors
+            WHERE doctor_name LIKE %s
+            """
+
+            cursor.execute(query, ("%" + search_value + "%",))
+
+        elif choice == "3":
+
+            query = """
+            SELECT *
+            FROM doctors
+            WHERE department LIKE %s
+            """
+
+            cursor.execute(query, ("%" + search_value + "%",))
+
+        elif choice == "4":
+
+            query = """
+            SELECT *
+            FROM doctors
+            WHERE availability_status=%s
+            """
+
+            cursor.execute(query, (search_value.title(),))
+
+        else:
+            print("Invalid search option.")
+            return
+
+        doctors = cursor.fetchall()
+
+        if not doctors:
+            print("No matching doctor found.")
+            return
+
+        for doctor in doctors:
+            show_doctor_details(doctor)
+
+    except Exception as error:
+
+        logger.exception(error)
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            close_database_connection(connection)
