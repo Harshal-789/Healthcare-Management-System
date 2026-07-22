@@ -1,21 +1,31 @@
 import ValidationModule as valid
+
 from LoggerModule import logger
 
+from PatientModule import find_patient_by_id
+from DoctorModule import find_doctor_by_id
 
-def find_patient_by_id(patients, patient_id):
-    """Return the matching patient record if the ID exists."""
-    for patient in patients:
-        if patient["patient_id"].lower() == patient_id.lower():
-            return patient
-    return None
+from datetime import datetime
+from database_connection import (
+    get_database_connection,
+    close_database_connection
+)
+
+
+# def find_patient_by_id(patients, patient_id):
+#     """Return the matching patient record if the ID exists."""
+#     for patient in patients:
+#         if patient["patient_id"].lower() == patient_id.lower():
+#             return patient
+#     return None
  
 
-def find_doctor_by_id(doctors, doctor_id):
-    """Return the matching doctor record if the ID exists."""
-    for doctor in doctors:
-        if doctor["doctor_id"].lower() == doctor_id.lower():
-            return doctor
-    return None
+# def find_doctor_by_id(doctors, doctor_id):
+#     """Return the matching doctor record if the ID exists."""
+#     for doctor in doctors:
+#         if doctor["doctor_id"].lower() == doctor_id.lower():
+#             return doctor
+#     return None
 
 
 def show_appointment_details(appointment, patient_name, doctor_name, department_name):
@@ -30,143 +40,311 @@ def show_appointment_details(appointment, patient_name, doctor_name, department_
     print(f"Status         : {appointment['status']}")
 
 
-def book_appointment(appointments, patients, doctors):
-    """Book a new appointment after checking patient, doctor and slot."""
+def book_appointment():
+
     print("\n--- Book Appointment ---")
 
+    connection = None
+    cursor = None
+
     try:
-        appointment_id = input("Enter Appointment ID: ").strip()
-        if not appointment_id:
-            print("Appointment ID cannot be empty.")
-            return
-
-        existing_appointment = None
-        for appointment in appointments:
-            if appointment["appointment_id"].lower() == appointment_id.lower():
-                existing_appointment = appointment
-                break
-
-        if existing_appointment is not None:
-            print(f"Appointment ID {appointment_id} already exists.")
-            return
 
         patient_id = input("Enter Patient ID: ").strip()
-        patient = find_patient_by_id(patients, patient_id)
+
+        patient = find_patient_by_id(patient_id)
+
         if patient is None:
-            print("Patient ID does not exist.")
-            logger.warning(f"Booking failed, Patient ID {patient_id} not found")
+            print("Patient not found.")
             return
 
         doctor_id = input("Enter Doctor ID: ").strip()
-        doctor = find_doctor_by_id(doctors, doctor_id)
+
+        doctor = find_doctor_by_id(doctor_id)
+
         if doctor is None:
-            print("Doctor ID does not exist.")
-            logger.warning(f"Booking failed, Doctor ID {doctor_id} not found")
+            print("Doctor not found.")
             return
 
         if doctor["availability_status"] != "Available":
             print("Doctor is currently unavailable.")
-            logger.warning(f"Doctor {doctor_id} is unavailable")
             return
 
-        appointment_date = input("Enter appointment date (DD-MM-YYYY): ").strip()
+        appointment_date = input("Enter Appointment Date (DD-MM-YYYY): ").strip()
+
         if not valid.validate_date(appointment_date):
-            print("Invalid date format. Please use DD-MM-YYYY.")
+            print("Invalid date.")
             return
+        
+        appointment_date = datetime.strptime(appointment_date,"%d-%m-%Y").strftime("%Y-%m-%d")
+        appointment_time = input("Enter Appointment Time (HH:MM AM/PM): ").strip()
 
-        appointment_time = input("Enter appointment time (e.g. 10:30 AM): ").strip()
+
         if not valid.validate_time(appointment_time):
-            print("Invalid time format. Please use HH:MM AM/PM.")
+            print("Invalid time.")
             return
 
-        slot_is_taken = any(
-            appointment["doctor_id"].lower() == doctor_id.lower()
-            and appointment["appointment_date"] == appointment_date
-            and appointment["appointment_time"].lower() == appointment_time.lower()
-            and appointment["status"] == "Scheduled"
-            for appointment in appointments
+        
+        appointment_time = datetime.strptime(
+            appointment_time,
+            "%I:%M %p"
+        ).strftime("%H:%M:%S")
+
+        connection = get_database_connection()
+
+        if connection is None:
+            print("Database connection failed.")
+            return
+
+        cursor = connection.cursor(dictionary=True)
+
+        query = """
+        SELECT *
+        FROM appointments
+        WHERE doctor_id=%s
+        AND appointment_date=%s
+        AND appointment_time=%s
+        AND status='Scheduled'
+        """
+
+        print("DEBUG appointment_date:", appointment_date)
+        print("DEBUG type:", type(appointment_date))
+
+        cursor.execute(
+            query,
+            (
+                doctor_id,
+                appointment_date,
+                appointment_time
+            )
         )
-        if slot_is_taken:
-            print("Appointment slot is already booked.")
-            logger.warning(f"Doctor {doctor_id} already booked at that slot")
+
+        if cursor.fetchone():
+
+            print("Appointment slot already booked.")
             return
 
-        new_appointment = {
-            "appointment_id": appointment_id,
-            "patient_id": patient_id,
-            "doctor_id": doctor_id,
-            "appointment_date": appointment_date,
-            "appointment_time": appointment_time,
-            "status": "Scheduled",
-        }
+        cursor = connection.cursor()
 
-        appointments.append(new_appointment)
-        print(f"Appointment {appointment_id} booked successfully.")
-        logger.info(f"Appointment {appointment_id} booked successfully")
+        query = """
+        INSERT INTO appointments
+        (
+            patient_id,
+            doctor_id,
+            appointment_date,
+            appointment_time,
+            status
+        )
+        VALUES
+        (%s,%s,%s,%s,%s)
+        """
 
-    except Exception:
-        print("Something went wrong while booking the appointment.")
-        logger.exception("Unexpected error while booking appointment")
+        cursor.execute(
+            query,
+            (
+                patient_id,
+                doctor_id,
+                appointment_date,
+                appointment_time,
+                "Scheduled"
+            )
+        )
 
+        connection.commit()
 
-def view_all_appointments(appointments, patients, doctors):
-    """Show all appointments along with patient and doctor names."""
+        print(
+            f"Appointment booked successfully. Appointment ID : {cursor.lastrowid}"
+        )
+
+        logger.info(
+            f"Appointment {cursor.lastrowid} booked successfully."
+        )
+
+    except Exception as error:
+
+        logger.exception(error)
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            close_database_connection(connection)
+
+def view_all_appointments():
+
     print("\n--- All Appointments ---")
 
-    if not appointments:
-        print("No appointments available.")
-        return
+    connection = None
+    cursor = None
 
-    for appointment in appointments:
-        patient = find_patient_by_id(patients, appointment["patient_id"])
-        doctor = find_doctor_by_id(doctors, appointment["doctor_id"])
+    try:
 
-        patient_name = patient["name"] if patient else "Unknown"
-        doctor_name = doctor["doctor_name"] if doctor else "Unknown"
-        department = doctor["department"] if doctor else "Unknown"
+        connection = get_database_connection()
 
-        show_appointment_details(appointment, patient_name, doctor_name, department)
-
-
-def cancel_appointment(appointments):
-    """Cancel a scheduled appointment."""
-    print("\n--- Cancel Appointment ---")
-    appointment_id = input("Enter Appointment ID: ").strip()
-
-    for appointment in appointments:
-        if appointment["appointment_id"].lower() == appointment_id.lower():
-            if appointment["status"] == "Completed":
-                print("This appointment is already completed and cannot be cancelled.")
-                return
-            if appointment["status"] == "Cancelled":
-                print("This appointment is already cancelled.")
-                return
-
-            appointment["status"] = "Cancelled"
-            print(f"Appointment {appointment_id} cancelled.")
-            logger.info(f"Appointment {appointment_id} cancelled")
+        if connection is None:
+            print("Database connection failed.")
             return
 
-    print("Appointment ID does not exist.")
+        cursor = connection.cursor(dictionary=True)
 
+        query = """
+        SELECT *
+        FROM appointments
+        ORDER BY appointment_id
+        """
 
-def complete_appointment(appointments):
-    """Mark a scheduled appointment as completed."""
-    print("\n--- Complete Appointment ---")
-    appointment_id = input("Enter Appointment ID: ").strip()
+        cursor.execute(query)
 
-    for appointment in appointments:
-        if appointment["appointment_id"].lower() == appointment_id.lower():
-            if appointment["status"] == "Cancelled":
-                print("A cancelled appointment cannot be marked as completed.")
-                return
-            if appointment["status"] == "Completed":
-                print("This appointment is already completed.")
-                return
+        appointments = cursor.fetchall()
 
-            appointment["status"] = "Completed"
-            print(f"Appointment {appointment_id} marked as completed.")
-            logger.info(f"Appointment {appointment_id} completed")
+        if not appointments:
+            print("No appointments available.")
             return
 
-    print("Appointment ID does not exist.")
+        for appointment in appointments:
+
+            patient = find_patient_by_id(appointment["patient_id"])
+            doctor = find_doctor_by_id(appointment["doctor_id"])
+
+            patient_name = patient["name"] if patient else "Unknown"
+            doctor_name = doctor["doctor_name"] if doctor else "Unknown"
+            department = doctor["department"] if doctor else "Unknown"
+
+            show_appointment_details(
+                appointment,
+                patient_name,
+                doctor_name,
+                department
+            )
+
+    except Exception as error:
+
+        logger.exception(error)
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            close_database_connection(connection)
+
+
+def cancel_appointment():
+
+    appointment_id = input("Enter Appointment ID: ").strip()
+
+    connection = None
+    cursor = None
+
+    try:
+
+        connection = get_database_connection()
+
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            "SELECT * FROM appointments WHERE appointment_id=%s",
+            (appointment_id,)
+        )
+
+        appointment = cursor.fetchone()
+
+        if appointment is None:
+            print("Appointment not found.")
+            return
+
+        if appointment["status"] == "Completed":
+            print("Completed appointment cannot be cancelled.")
+            return
+
+        if appointment["status"] == "Cancelled":
+            print("Appointment already cancelled.")
+            return
+
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            UPDATE appointments
+            SET status='Cancelled'
+            WHERE appointment_id=%s
+            """,
+            (appointment_id,)
+        )
+
+        connection.commit()
+
+        print("Appointment cancelled successfully.")
+
+    except Exception as error:
+
+        logger.exception(error)
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            close_database_connection(connection)
+
+def complete_appointment():
+
+    appointment_id = input("Enter Appointment ID: ").strip()
+
+    connection = None
+    cursor = None
+
+    try:
+
+        connection = get_database_connection()
+
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            "SELECT * FROM appointments WHERE appointment_id=%s",
+            (appointment_id,)
+        )
+
+        appointment = cursor.fetchone()
+
+        if appointment is None:
+            print("Appointment not found.")
+            return
+
+        if appointment["status"] == "Cancelled":
+            print("Cancelled appointment cannot be completed.")
+            return
+
+        if appointment["status"] == "Completed":
+            print("Appointment already completed.")
+            return
+
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            UPDATE appointments
+            SET status='Completed'
+            WHERE appointment_id=%s
+            """,
+            (appointment_id,)
+        )
+
+        connection.commit()
+
+        print("Appointment marked as completed.")
+
+    except Exception as error:
+
+        logger.exception(error)
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if connection:
+            close_database_connection(connection)
