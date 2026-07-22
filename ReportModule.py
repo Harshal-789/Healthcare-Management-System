@@ -339,11 +339,7 @@ def generate_appointment_reports():
         )
 
         print(
-<<<<<<< Updated upstream
-            f"Patient with the highest number of appointments !!!!: "
-=======
             f"Patient with the highest number of appointments : "
->>>>>>> Stashed changes
             f"{busiest_patient} ({patient_count[busiest_patient]} appointments)"
         )
 
@@ -499,8 +495,4 @@ def generate_healthcare_reports():
 
     except Exception as error:
 
-<<<<<<< Updated upstream
         logger.exception(error)
-=======
-        logger.exception(error)
->>>>>>> Stashed changes
