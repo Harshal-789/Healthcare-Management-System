@@ -116,7 +116,11 @@ python main.py
 ## 👥 Team Members
 
 - Harshal Chelikani
-- Team Members (Scrum Project)
+- Ishita Sharma
+- Dimple Samota
+- Siddarth Mandal
+- Samarth Thakur
+- Nidhi
 
 ---
 
