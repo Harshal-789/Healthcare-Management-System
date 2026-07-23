@@ -15,7 +15,7 @@ def get_database_connection():
         connection = mysql.connector.connect(
             host="localhost",
             user="root",
-            password="9494006234@Hh",
+            password="",
             database="hospital_management_db"
         )
 
